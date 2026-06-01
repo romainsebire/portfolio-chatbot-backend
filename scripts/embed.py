@@ -1,0 +1,140 @@
+"""
+Script d'alimentation — Découpe contexte.txt en chunks et les insère dans Pinecone.
+
+Usage :
+    python scripts/embed.py
+
+Prérequis :
+    - Fichier .env configuré avec PINECONE_API_KEY et PINECONE_INDEX_NAME
+    - Index Pinecone créé (dimension = 384 pour all-MiniLM-L6-v2)
+"""
+
+import os
+import re
+import sys
+
+# Ajouter le dossier racine au path pour importer app/
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
+
+from dotenv import load_dotenv
+
+load_dotenv()
+
+from pinecone import Pinecone
+from sentence_transformers import SentenceTransformer
+
+# ---------------------------------------------------------------------------
+# Configuration
+# ---------------------------------------------------------------------------
+PINECONE_API_KEY = os.environ["PINECONE_API_KEY"]
+PINECONE_INDEX_NAME = os.environ.get("PINECONE_INDEX_NAME", "portfolio-chatbot")
+EMBEDDING_MODEL = os.environ.get("EMBEDDING_MODEL", "all-MiniLM-L6-v2")
+DATA_FILE = os.path.join(os.path.dirname(__file__), "..", "data", "contexte.txt")
+
+MAX_CHUNK_CHARS = 1500  # ~375 tokens
+OVERLAP_CHARS = 200
+
+
+# ---------------------------------------------------------------------------
+# Chunking
+# ---------------------------------------------------------------------------
+def load_and_chunk(filepath: str) -> list[dict]:
+    """Découpe le fichier contexte.txt en chunks par section (## TITRE)."""
+    with open(filepath, "r", encoding="utf-8") as f:
+        content = f.read()
+
+    # Supprimer les commentaires HTML
+    content = re.sub(r"<!--.*?-->", "", content, flags=re.DOTALL)
+
+    # Découper par section (## TITRE)
+    sections = re.split(r"^(## .+)$", content, flags=re.MULTILINE)
+
+    chunks = []
+    current_section = "GENERAL"
+
+    for part in sections:
+        part = part.strip()
+        if not part:
+            continue
+
+        if part.startswith("## "):
+            current_section = part.replace("## ", "").strip()
+            continue
+
+        # Découper les sections longues en sous-chunks
+        if len(part) <= MAX_CHUNK_CHARS:
+            if part:
+                chunks.append({"section": current_section, "text": part})
+        else:
+            # Split par paragraphe puis recomposer des chunks ≤ MAX_CHUNK_CHARS
+            paragraphs = [p.strip() for p in part.split("\n\n") if p.strip()]
+            current_chunk = ""
+            for para in paragraphs:
+                if len(current_chunk) + len(para) + 2 > MAX_CHUNK_CHARS:
+                    if current_chunk:
+                        chunks.append({"section": current_section, "text": current_chunk})
+                    current_chunk = para
+                else:
+                    current_chunk = f"{current_chunk}\n\n{para}" if current_chunk else para
+            if current_chunk:
+                chunks.append({"section": current_section, "text": current_chunk})
+
+    return chunks
+
+
+# ---------------------------------------------------------------------------
+# Main
+# ---------------------------------------------------------------------------
+def main():
+    print(f"📄 Loading data from: {os.path.abspath(DATA_FILE)}")
+    chunks = load_and_chunk(DATA_FILE)
+
+    if not chunks:
+        print("❌ No chunks found. Check data/contexte.txt content.")
+        sys.exit(1)
+
+    print(f"✂️  {len(chunks)} chunk(s) extracted:")
+    for i, c in enumerate(chunks):
+        print(f"   [{i}] ({c['section']}) {c['text'][:80]}...")
+
+    # Load embedding model
+    print(f"\n🧠 Loading embedding model: {EMBEDDING_MODEL}")
+    model = SentenceTransformer(EMBEDDING_MODEL)
+
+    # Generate embeddings
+    texts = [c["text"] for c in chunks]
+    print("🔄 Generating embeddings...")
+    embeddings = model.encode(texts, show_progress_bar=True)
+
+    # Connect to Pinecone
+    print(f"\n🌲 Connecting to Pinecone index: {PINECONE_INDEX_NAME}")
+    pc = Pinecone(api_key=PINECONE_API_KEY)
+    index = pc.Index(PINECONE_INDEX_NAME)
+
+    # Upsert vectors
+    vectors = []
+    for i, (chunk, embedding) in enumerate(zip(chunks, embeddings)):
+        vectors.append({
+            "id": f"chunk-{i}",
+            "values": embedding.tolist(),
+            "metadata": {
+                "text": chunk["text"],
+                "section": chunk["section"],
+                "source": "contexte.txt",
+            },
+        })
+
+    # Upsert in batches of 100
+    batch_size = 100
+    for i in range(0, len(vectors), batch_size):
+        batch = vectors[i : i + batch_size]
+        index.upsert(vectors=batch)
+        print(f"   ✅ Upserted batch {i // batch_size + 1} ({len(batch)} vectors)")
+
+    print(f"\n🎉 Done! {len(vectors)} vectors inserted into '{PINECONE_INDEX_NAME}'.")
+    stats = index.describe_index_stats()
+    print(f"📊 Index stats: {stats}")
+
+
+if __name__ == "__main__":
+    main()
