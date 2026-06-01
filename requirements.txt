@@ -12,7 +12,7 @@ fastmcp>=2.5.1
 langchain-mcp-adapters>=0.1.9
 
 # Embeddings
-sentence-transformers==4.1.0
+sentence-transformers==5.5.1
 
 # Vector database
 pinecone-client==6.0.2
