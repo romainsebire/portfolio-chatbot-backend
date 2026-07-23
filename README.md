@@ -7,8 +7,9 @@ Architecture: **MCP + LangGraph**: FastAPI -> ReAct Agent -> FastMCP RAG Server 
 
 ## Video Demo
 
-<!-- * **French Demo**: https://github.com/user-attachments/assets/ede303cc-b0dd-43df-91cc-097b38015ae0 -->
-* **Video Demo**: https://github.com/user-attachments/assets/ca02c0df-eca4-4e33-b990-d49da78bfd32
+<!-- https://github.com/user-attachments/assets/ede303cc-b0dd-43df-91cc-097b38015ae0 -->
+
+https://github.com/user-attachments/assets/ca02c0df-eca4-4e33-b990-d49da78bfd32
 
 ---
 

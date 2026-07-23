@@ -146,3 +146,16 @@ def test_admin_daily_stats_authorized(client):
     assert response.status_code == 200
     data = response.json()
     assert isinstance(data, dict)
+
+
+def test_system_prompts_definition_and_meta_language_rules():
+    """Verify that system prompts explicitly handle technical definitions and ban RAG meta-language."""
+    from app.prompts import SYSTEM_PROMPT_PASS1, SYSTEM_PROMPT_PASS2
+
+    assert "AI/IA" in SYSTEM_PROMPT_PASS1
+    assert "LLM" in SYSTEM_PROMPT_PASS1
+
+    assert "NO RAG META-LANGUAGE" in SYSTEM_PROMPT_PASS2
+    assert "The documents do not specify" in SYSTEM_PROMPT_PASS2
+
+
