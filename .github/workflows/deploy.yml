@@ -1,4 +1,4 @@
-name: CI/CD Pipeline: Security Audit, Unit Tests, Deploy
+name: "CI/CD Pipeline: Security Audit, Unit Tests, Deploy"
 
 on:
   push:
