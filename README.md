@@ -1,7 +1,14 @@
 # Portfolio Chatbot Backend
 
-Backend API agentic pour le chatbot IA du portfolio [romainsebire.fr](https://romainsebire.fr).  
-Architecture **MCP + LangGraph** : FastAPI → Agent ReAct → MCP Server RAG (Pinecone) → Groq LLM.
+Agentic API backend for the AI portfolio chatbot at [romainsebire.fr](https://romainsebire.fr).  
+Architecture: **MCP + LangGraph**: FastAPI -> ReAct Agent -> FastMCP RAG Server (Pinecone) -> Groq LLM Cascade.
+
+---
+
+## Video Demo
+
+<!-- * **French Demo**: https://github.com/user-attachments/assets/ede303cc-b0dd-43df-91cc-097b38015ae0 -->
+* **Video Demo**: https://github.com/user-attachments/assets/ca02c0df-eca4-4e33-b990-d49da78bfd32
 
 ---
 
@@ -9,161 +16,146 @@ Architecture **MCP + LangGraph** : FastAPI → Agent ReAct → MCP Server RAG (P
 
 ```
 app/
-├── main.py          # FastAPI (CORS, routes, middlewares, error handlers)
-├── config.py        # pydantic-settings — chargement typé depuis .env
+├── main.py          # FastAPI entrypoint (CORS, routes, middlewares, exception handlers)
+├── config.py        # pydantic-settings: typed configuration loaded from environment
 ├── security.py      # Rate limiting, security headers, input/output sanitization
-├── models.py        # Pydantic models (validation stricte)
-├── prompts.py       # System prompts de l'agent (FR/EN)
-├── agent.py         # Agent LangGraph ReAct (graphe, mémoire, tool-calling)
-├── mcp_server.py    # Serveur MCP FastMCP (outils RAG exposés via MCP)
-├── rag.py           # Orchestrateur (connecte MCP → Agent → Réponse)
-└── embeddings.py    # Singleton sentence-transformers
-evaluation/
-├── dataset.py       # Dataset d'évaluation (questions/réponses attendues)
-└── evaluate.py      # LLM-as-a-Judge (scoring automatique)
+├── models.py        # Pydantic request & response validation models
+├── prompts.py       # Agent 2-pass system prompts (Pass 1 Router, Pass 2 Generator)
+├── agent.py         # LangGraph ReAct agent (graph execution, memory, tool-calling)
+├── mcp_server.py    # FastMCP server (RAG tools exposed over stdio)
+├── rag.py           # RAG orchestrator (connects MCP -> Agent -> Response)
+└── embeddings.py    # Pinecone Cloud Inference API client singleton
 ```
 
-### Flux de traitement
+### Execution Flow
 
 ```
 Frontend (romainsebire.fr)
     │ POST /chat {message, lang, thread_id}
     ▼
-FastAPI (main.py) — validation, sanitization, rate limiting
+FastAPI (main.py): validation, sanitization, rate limiting
     │
     ▼
-Orchestrateur (rag.py) — charge les outils MCP, construit l'agent
+Orchestrator (rag.py): loads MCP tools, builds LangGraph agent
     │
     ▼
-Agent LangGraph (agent.py) — graphe ReAct avec mémoire
-    │ ◄── System Prompt (prompts.py)
+LangGraph Agent (agent.py): ReAct graph execution with memory
+    │ <── System Prompt (prompts.py)
     │
-    ├── [call_model] → LLM décide d'appeler un outil
+    ├── [call_model] -> LLM decides to call a tool or reply directly
     │       │
     │       ▼
-    ├── [tools] → MCP Server (mcp_server.py)
-    │       │       ├── retrieve_documents() → Pinecone
-    │       │       └── get_context_info()   → Pinecone stats
+    ├── [tools] -> FastMCP Server (mcp_server.py)
+    │       │       ├── retrieve_documents() -> Pinecone Cloud
+    │       │       └── get_context_info()   -> Pinecone stats
     │       │
     │       ▼
-    └── [call_model] → LLM génère la réponse finale
+    └── [call_model] -> LLM generates final response (Pass 2)
             │
             ▼
-Sanitization sortie → {reply, thread_id}
+Output sanitization -> {reply, thread_id}
 ```
 
-## Installation locale
+## Local Installation
 
 ```bash
-# 1. Cloner et entrer dans le projet
+# 1. Clone repository and enter directory
 git clone <repo-url> && cd portfolio-chatbot-backend
 
-# 2. Créer un environnement virtuel
+# 2. Create Python virtual environment
 python -m venv .venv && source .venv/bin/activate
 
-# 3. Installer les dépendances
+# 3. Install dependencies
 pip install -r requirements.txt
 
-# 4. Configurer les variables d'environnement
+# 4. Configure environment variables
 cp .env.example .env
-# → Remplir .env avec tes clés Pinecone, Groq, etc.
+# Populate .env with API keys (Pinecone, Groq, etc.)
 
-# 5. Lancer le serveur de développement
+# 5. Launch local development server
 uvicorn app.main:app --reload
 ```
 
-## Alimentation de Pinecone
+## Vector Database Indexing
 
 ```bash
-# Remplir data/contexte.txt avec tes données (CV, projets, PFE…)
-# Puis lancer le script d'embedding (une seule fois, ou après mise à jour) :
+# Populate data/contexte.txt with personal portfolio data (CV, projects, experience)
+# Run the embedding ingestion script (from local machine):
 python scripts/embed.py
 ```
 
-**Prérequis** : un index Pinecone créé avec dimension `384` (pour `paraphrase-multilingual-MiniLM-L12-v2`).
-
-## Tests
+## Testing & Security Audits
 
 ```bash
-# Tests fonctionnels + sécurité
+# Run unit and security test suite (38 tests)
 pytest tests/ -v
 
-# Audit de sécurité
+# Run dependency and static security audits
 pip-audit
 bandit -r app/
 ```
 
-## API
+## API Specification
 
-| Méthode | Endpoint  | Description                    |
-|---------|-----------|--------------------------------|
-| `POST`  | `/chat`   | Envoyer un message au chatbot  |
-| `GET`   | `/health` | Health check                   |
+| Method | Endpoint  | Description                             |
+|--------|-----------|-----------------------------------------|
+| `POST` | `/chat`   | Send user message to chatbot agent      |
+| `GET`  | `/health` | Health check endpoint                   |
 
 **`POST /chat`**
 ```json
 // Request
-{ "message": "Quelles sont les compétences de Romain ?", "lang": "fr", "thread_id": "session-123" }
+{ "message": "What are Romain's technical skills?", "lang": "en", "thread_id": "session-123" }
 
 // Response
-{ "reply": "Romain maîtrise Python, FastAPI, JavaScript...", "thread_id": "session-123" }
+{ "reply": "Romain specializes in Python, Machine Learning, FastMCP, and FastAPI...", "thread_id": "session-123" }
 ```
 
-## Évaluation
+## Security Features
 
-```bash
-# Lancer l'évaluation automatique (LLM-as-a-Judge)
-python -m evaluation.evaluate
-```
-
-Évalue le chatbot sur 15 questions avec scoring sur 3 axes :
-- **Correctness** (40%) — exactitude factuelle
-- **Completeness** (35%) — couverture de la question
-- **Safety** (25%) — pas de fabrication, respect du cadre
-
-## Sécurité
-
-| Protection                  | Implémentation                                          |
+| Feature                     | Implementation                                          |
 |-----------------------------|---------------------------------------------------------|
-| Rate limiting               | `slowapi` — 10 req/min par IP sur `/chat`               |
-| CORS strict                 | Whitelist d'origines (pas de wildcard `*`)               |
-| Validation d'entrée         | Pydantic : max 500 chars, lang restreint, body ≤ 1KB    |
-| Prompt injection defense    | Filtrage regex + system prompt renforcé avec guardrails  |
-| Output sanitization         | Strip HTML/script des réponses LLM (anti-XSS)           |
+| Rate limiting               | `slowapi`: 10 requests/min per IP on `/chat`            |
+| Daily token quota           | `DailyTokenLimiter`: 50,000 tokens/day per IP           |
+| Strict CORS                 | Explicit allowed origins whitelist (no wildcard `*`)    |
+| Input validation            | Pydantic: 250 max characters, payload limit <= 4KB     |
+| Prompt injection defense    | Regex pattern matching + system prompt guardrails       |
+| Output sanitization         | HTML/script tag stripping (anti-XSS)                    |
 | Security headers            | HSTS, CSP, X-Frame-Options, X-Content-Type-Options, etc.|
-| Secrets management          | `.env` gitignored, pydantic-settings, fail-fast          |
-| Logging sûr                 | Hash SHA-256 des messages (pas de PII en clair)          |
-| Audit dépendances           | `pip-audit` + Dependabot (scan hebdomadaire)             |
-| Analyse statique            | `bandit` en CI                                           |
-| Error handling              | Messages génériques (jamais de stack trace côté client)   |
+| Secrets management          | `.env` gitignored, pydantic-settings                    |
+| Traceability                | SHA-256 message hashing (no raw PII in logs)            |
+| Log rotation                | `RotatingFileHandler`: 20 MB per file, max 2 backups    |
+| Dependency auditing         | `pip-audit` in CI                                       |
+| Static analysis             | `bandit` static security analysis in CI                 |
+| Error handling              | Generic error details (no stack trace exposure)         |
 
-## CI/CD
+## CI/CD Pipeline
 
-Pipeline GitHub Actions (`.github/workflows/deploy.yml`) :
+GitHub Actions workflow (`.github/workflows/deploy.yml`):
 
-1. **`security`** — `pip-audit` + `bandit -r app/`
-2. **`test`** — `pytest tests/ -v`
-3. **`deploy`** — Trigger Render Deploy Hook (uniquement sur push `main`)
+1. **`security`**: `pip-audit` + `bandit -r app/`
+2. **`test`**: `pytest tests/ -v`
+3. **`deploy`**: Trigger Render Deploy Hook (push on `main` only)
 
-**Secret GitHub requis** : `RENDER_DEPLOY_HOOK_URL`
+**Required GitHub Secret**: `RENDER_DEPLOY_HOOK_URL`
 
-## Technologies clés
+## Core Technologies
 
-| Composant | Technologie | Rôle |
-|-----------|------------|------|
-| API | FastAPI | Serveur web async, validation, CORS |
-| Agent | LangGraph (ReAct) | Orchestration autonome, mémoire conversationnelle |
-| Protocol | MCP (FastMCP) | Interface standardisée pour les outils RAG |
-| Vector DB | Pinecone | Stockage vectoriel cloud (persistant, free tier) |
-| Embeddings | sentence-transformers | Vectorisation des textes (multilingual) |
-| LLM | Groq (Llama 3.3 70B) | Génération de réponses |
-| Sécurité | slowapi + custom middlewares | Rate limiting, headers, sanitization |
-| CI/CD | GitHub Actions + Render | Tests, audit sécurité, déploiement |
+| Component | Technology | Description |
+|-----------|------------|-------------|
+| API | FastAPI | Async web framework, CORS, validation |
+| Agent | LangGraph (ReAct) | Autonomous orchestration, stateful memory |
+| Protocol | MCP (FastMCP) | Standardized interface for RAG tools |
+| Vector DB | Pinecone | Cloud vector database |
+| Embeddings | Pinecone Inference | Cloud embedding generation |
+| LLM | Groq Cascade | Dynamic fallback cascade across Groq LLM models |
+| Security | slowapi + custom middleware | Rate limiting, security headers, sanitization |
+| CI/CD | GitHub Actions + Render | Automated test, audit, and deployment pipeline |
 
-## Déploiement Render
+## Render Deployment
 
-1. Créer un **Web Service** sur [render.com](https://render.com)
-2. **Build Command** : `pip install -r requirements.txt`
-3. **Start Command** : `uvicorn app.main:app --host 0.0.0.0 --port $PORT`
-4. Configurer les **Environment Variables** (mêmes que `.env.example`)
-5. Copier le **Deploy Hook URL** → ajouter comme secret GitHub `RENDER_DEPLOY_HOOK_URL`
+1. Create a **Web Service** on [render.com](https://render.com)
+2. **Build Command**: `pip install -r requirements.txt`
+3. **Start Command**: `uvicorn app.main:app --host 0.0.0.0 --port $PORT`
+4. Configure **Environment Variables** matching `.env.example`
+5. Copy **Deploy Hook URL** and add as GitHub Secret `RENDER_DEPLOY_HOOK_URL`

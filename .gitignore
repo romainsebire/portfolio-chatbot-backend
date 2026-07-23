@@ -31,5 +31,12 @@ htmlcov/
 .DS_Store
 Thumbs.db
 
-# Logs
+# Logs and runtime artifacts
 *.log
+daily_stats.json
+benchmark_results.json
+
+# Sensitive data files
+data/contexte.txt
+data/*.txt
+!data/contexte.example.txt

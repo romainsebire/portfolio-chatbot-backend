@@ -1,20 +1,23 @@
 """
-RAG pipeline — orchestre le serveur MCP et l'agent LangGraph.
+RAG pipeline: orchestrates the MCP server and the LangGraph agent.
 
-Ce module est le point d'entrée principal pour le traitement des messages.
-Il connecte le serveur MCP (outils RAG) à l'agent LangGraph via
-langchain-mcp-adapters, et gère la mémoire conversationnelle par thread_id.
+This module is the main entry point for processing incoming chat messages.
+It connects the MCP server (RAG tools) to the LangGraph agent via
+langchain-mcp-adapters, managing conversational memory indexed by thread_id.
 
-Flux complet :
-    1. Le serveur MCP FastMCP est chargé en mémoire (in-process, mode stdio)
-    2. Les outils MCP sont convertis en outils LangChain
-    3. L'agent LangGraph est construit avec ces outils
-    4. Le message utilisateur est envoyé à l'agent
-    5. L'agent décide autonomement d'appeler retrieve_documents (ou pas)
-    6. La réponse finale est sanitizée et renvoyée
+Execution flow:
+    1. FastMCP server runs in-process via stdio mode
+    2. MCP tools are converted into LangChain compatible tools
+    3. The LangGraph agent is compiled with these tools
+    4. The user message is dispatched to the agent
+    5. The agent decides autonomously whether to call retrieve_documents
+    6. The final response is sanitized and returned
 """
 
+from contextlib import AsyncExitStack
 import logging
+import os
+import sys
 import uuid
 
 from langchain_core.messages import HumanMessage
@@ -27,94 +30,107 @@ from app.security import sanitize_output
 
 logger = logging.getLogger(__name__)
 
-# ---------------------------------------------------------------------------
-# Cache des outils MCP et de l'agent (initialisés au premier appel)
-# ---------------------------------------------------------------------------
+# Cache for MCP tools and compiled agent
+_client_stack: AsyncExitStack | None = None
 _mcp_tools: list | None = None
-_agents: dict = {}  # cache par langue : {"fr": compiled_graph, "en": compiled_graph}
+_agent = None
 
 
-async def _load_mcp_tools() -> list:
-    """Charge les outils depuis le serveur MCP in-process via stdio."""
-    global _mcp_tools
+async def init_mcp() -> list:
+    """Initialize persistent stdio connection to the FastMCP server and load tools."""
+    global _client_stack, _mcp_tools
     if _mcp_tools is not None:
         return _mcp_tools
 
-    logger.info("Loading MCP tools from in-process server...")
+    logger.info("Starting persistent MCP server connection...")
+
+    venv_bin = os.path.dirname(sys.executable)
+    fastmcp_cmd = os.path.join(venv_bin, "fastmcp")
+    if not os.path.exists(fastmcp_cmd):
+        fastmcp_cmd = "fastmcp"
+
+    env = os.environ.copy()
+    env["PYTHONPATH"] = os.getcwd()
 
     server_params = StdioServerParameters(
-        command="python",
-        args=["-m", "fastmcp", "run", "app.mcp_server:mcp"],
+        command=fastmcp_cmd,
+        args=["run", "app/mcp_server.py"],
+        env=env,
     )
 
-    async with stdio_client(server_params) as (read, write):
-        async with ClientSession(read, write) as session:
-            await session.initialize()
-            _mcp_tools = await load_mcp_tools(session)
+    _client_stack = AsyncExitStack()
+    try:
+        read, write = await _client_stack.enter_async_context(stdio_client(server_params))
+        session = await _client_stack.enter_async_context(ClientSession(read, write))
+        await session.initialize()
+        _mcp_tools = await load_mcp_tools(session)
+        logger.info("MCP tools loaded successfully: %s", [t.name for t in _mcp_tools])
+        return _mcp_tools
+    except Exception:
+        logger.exception("Failed to initialize MCP connection")
+        await _client_stack.aclose()
+        _client_stack = None
+        _mcp_tools = None
+        raise
 
-    logger.info("MCP tools loaded: %s", [t.name for t in _mcp_tools])
-    return _mcp_tools
+
+async def close_mcp():
+    """Cleanly close persistent connection to the MCP server."""
+    global _client_stack, _mcp_tools, _agent
+    if _client_stack is not None:
+        logger.info("Closing persistent MCP server connection...")
+        await _client_stack.aclose()
+        _client_stack = None
+        _mcp_tools = None
+        _agent = None
 
 
-def _get_agent(lang: str):
-    """Retourne l'agent compilé pour la langue donnée (cache)."""
-    if lang not in _agents:
-        # Les outils doivent être chargés avant
+def _get_agent(lang: str = "fr"):
+    """Return the cached compiled agent."""
+    global _agent
+    if _agent is None:
         if _mcp_tools is None:
-            raise RuntimeError("MCP tools not loaded. Call _load_mcp_tools() first.")
-        _agents[lang] = build_agent(_mcp_tools, lang=lang)
-    return _agents[lang]
+            raise RuntimeError("MCP tools not loaded. Call init_mcp() first.")
+        _agent = build_agent(_mcp_tools)
+    return _agent
 
 
-# ---------------------------------------------------------------------------
-# Point d'entrée principal
-# ---------------------------------------------------------------------------
 async def get_rag_response(
     message: str,
     lang: str = "fr",
     thread_id: str | None = None,
-) -> str:
+) -> tuple[str, str]:
     """
-    Traite un message utilisateur via le pipeline agentic RAG complet.
+    Process a user message through the full agentic RAG pipeline.
 
     Args:
-        message: Le message sanitizé de l'utilisateur.
-        lang: Langue de la réponse ("fr" ou "en").
-        thread_id: Identifiant de conversation pour la mémoire.
-                   Si None, génère un UUID (conversation one-shot).
+        message: The sanitized user input message.
+        lang: Response language preference ("fr" or "en").
+        thread_id: Conversation thread identifier for memory.
+                   Generates a new UUID if None.
 
     Returns:
-        La réponse textuelle de l'agent, sanitizée.
+        Tuple of (sanitized_reply, effective_thread_id).
     """
+    effective_thread_id = thread_id or str(uuid.uuid4())
     try:
-        # 1. Charger les outils MCP (lazy, une seule fois)
-        await _load_mcp_tools()
-
-        # 2. Récupérer l'agent compilé
+        await init_mcp()
         agent = _get_agent(lang)
 
-        # 3. Préparer le thread_id pour la mémoire
-        if thread_id is None:
-            thread_id = str(uuid.uuid4())
+        config = {"configurable": {"thread_id": effective_thread_id}}
 
-        config = {"configurable": {"thread_id": thread_id}}
-
-        # 4. Invoquer l'agent avec le message
         result = await agent.ainvoke(
             {"messages": [HumanMessage(content=message)]},
             config=config,
         )
 
-        # 5. Extraire la dernière réponse de l'agent
         reply = result["messages"][-1].content or ""
-
-        # 6. Sanitize la sortie (protection XSS)
         reply = sanitize_output(reply)
 
-        return reply
+        return reply, effective_thread_id
 
     except Exception:
         logger.exception("Error in RAG pipeline")
         if lang == "fr":
-            return "Désolé, une erreur est survenue. Veuillez réessayer dans quelques instants."
-        return "Sorry, an error occurred. Please try again in a moment."
+            return "Une erreur technique temporaire est survenue lors du traitement de votre demande. Veuillez réessayer dans quelques instants.", effective_thread_id
+        return "A temporary technical error occurred while processing your request. Please try again in a few moments.", effective_thread_id

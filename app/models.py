@@ -1,4 +1,4 @@
-"""Pydantic models — validation stricte des requêtes et réponses."""
+"""Pydantic models for request and response validation."""
 
 from typing import Literal
 
@@ -9,18 +9,17 @@ class ChatRequest(BaseModel):
     message: str = Field(
         ...,
         min_length=1,
-        max_length=500,
-        strip_whitespace=True,
-        description="Message de l'utilisateur",
+        max_length=250,
+        description="User message content",
     )
     lang: Literal["fr", "en"] = Field(
         default="fr",
-        description="Langue de la réponse",
+        description="Response language preference",
     )
     thread_id: str | None = Field(
         default=None,
         max_length=100,
-        description="Identifiant de conversation pour la mémoire multi-turn",
+        description="Conversation thread identifier for multi-turn memory",
     )
 
 
