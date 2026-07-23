@@ -8,7 +8,7 @@ langchain-groq>=0.3.3
 langgraph>=0.4.7
 
 # MCP (Model Context Protocol)
-fastmcp>=2.5.1
+fastmcp>=3.4.4
 langchain-mcp-adapters>=0.1.9
 
 # Embeddings (Pinecone Cloud Inference is used, no local packages required)
