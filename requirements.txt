@@ -1,6 +1,6 @@
 # Web framework
-fastapi==0.115.12
-uvicorn[standard]==0.34.3
+fastapi>=0.116.0
+uvicorn[standard]>=0.34.3
 
 # LLM (LangChain + Groq)
 langchain>=0.3.27
@@ -8,26 +8,27 @@ langchain-groq>=0.3.3
 langgraph>=0.4.7
 
 # MCP (Model Context Protocol)
-fastmcp>=2.5.1
+fastmcp>=2.14.2
 langchain-mcp-adapters>=0.1.9
 
 # Embeddings (Pinecone Cloud Inference is used, no local packages required)
 
 # Vector database
-pinecone==6.0.0
+pinecone>=6.0.0
 
 # Configuration
-python-dotenv==1.1.0
-pydantic-settings==2.9.1
+python-dotenv>=1.0.0
+pydantic-settings>=2.9.1
 
 # Security
-slowapi==0.1.9
+slowapi>=0.1.9
 
 # Testing
-pytest==8.3.5
-pytest-asyncio==0.25.3
-httpx==0.28.1
+pytest>=8.3.5
+pytest-asyncio>=0.25.3
+httpx>=0.28.1
 
 # Security auditing (CI)
-pip-audit==2.9.0
-bandit==1.8.3
+pip-audit>=2.9.0
+bandit>=1.8.3
+
