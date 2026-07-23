@@ -1,21 +1,27 @@
 version: 2
 updates:
-  # Python dependencies (pip)
+  # Python dependencies (pip) - Monthly schedule, major version updates only
   - package-ecosystem: "pip"
     directory: "/"
     schedule:
-      interval: "weekly"
-    open-pull-requests-limit: 5
+      interval: "monthly"
+    open-pull-requests-limit: 3
+    ignore:
+      - dependency-name: "*"
+        update-types: ["version-update:semver-minor", "version-update:semver-patch"]
     labels:
       - "dependencies"
       - "security"
 
-  # GitHub Actions
+  # GitHub Actions - Monthly schedule, major version updates only
   - package-ecosystem: "github-actions"
     directory: "/"
     schedule:
-      interval: "weekly"
-    open-pull-requests-limit: 3
+      interval: "monthly"
+    open-pull-requests-limit: 2
+    ignore:
+      - dependency-name: "*"
+        update-types: ["version-update:semver-minor", "version-update:semver-patch"]
     labels:
       - "ci"
       - "dependencies"

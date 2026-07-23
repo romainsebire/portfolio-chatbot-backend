@@ -1,16 +1,18 @@
 """
-Agent LangGraph — graphe ReAct avec tool-calling et mémoire conversationnelle.
+LangGraph agent: ReAct graph with tool calling and conversational memory.
 
-Architecture :
-    START → [call_model] → (tools_condition) →
-        si tool calls : [tools] → retour à [call_model]
-        sinon         : END
+Architecture:
+    START -> [call_model] -> (tools_condition) ->
+        if tool calls: [tools] -> back to [call_model]
+        else         : END
 
-L'agent utilise ChatGroq comme LLM, avec les outils MCP bindés.
-La mémoire est gérée par MemorySaver (par thread_id pour le multi-turn).
+The agent uses ChatGroq as the LLM provider with bound MCP tools.
+Memory is managed by MemorySaver indexed by thread_id for multi-turn conversations.
 """
 
 import logging
+import re
+import time
 from typing import Annotated, TypedDict
 
 from langchain_core.messages import AnyMessage
@@ -20,64 +22,160 @@ from langgraph.graph import StateGraph, START, add_messages
 from langgraph.prebuilt import ToolNode, tools_condition
 
 from app.config import settings
-from app.prompts import SYSTEM_PROMPT_FR, SYSTEM_PROMPT_EN
+from app.prompts import SYSTEM_PROMPT_PASS1, SYSTEM_PROMPT_PASS2
 
 logger = logging.getLogger(__name__)
 
 
-# ---------------------------------------------------------------------------
-# State — état du graphe (liste de messages avec accumulation automatique)
-# ---------------------------------------------------------------------------
+# Graph state (message list with automatic append strategy)
 class AgentState(TypedDict):
     messages: Annotated[list[AnyMessage], add_messages]
 
 
-# ---------------------------------------------------------------------------
-# Mémoire conversationnelle (in-process, par thread_id)
-# ---------------------------------------------------------------------------
+# Conversational memory (in-process, indexed by thread_id)
 memory = MemorySaver()
 
 
-# ---------------------------------------------------------------------------
-# Construction du graphe
-# ---------------------------------------------------------------------------
+class ModelCooldownTracker:
+    """In-memory tracker for temporary quarantine of Groq models encountering rate limits."""
+
+    def __init__(self):
+        self._disabled_until: dict[str, float] = {}
+
+    def is_active(self, model_name: str) -> bool:
+        """Check whether a model is available (quarantine expired or inactive)."""
+        until = self._disabled_until.get(model_name, 0)
+        return time.time() >= until
+
+    def parse_and_disable(self, model_name: str, error_message: str):
+        """Extract cooldown duration from Groq error message and quarantine the model."""
+        msg = str(error_message)
+        match = re.search(r'try again in (?:(\d+)h)?(?:(\d+)m)?(\d+(?:\.\d+)?)s', msg, re.IGNORECASE)
+        if match:
+            h = int(match.group(1) or 0)
+            mins = int(match.group(2) or 0)
+            secs = float(match.group(3) or 0)
+            cooldown = h * 3600 + mins * 60 + secs
+        else:
+            cooldown = 60.0
+
+        cooldown = max(cooldown, 10.0)
+        self._disabled_until[model_name] = time.time() + cooldown
+        logger.warning(
+            f"[CIRCUIT BREAKER] Model '{model_name}' placed in quarantine for {cooldown:.1f}s. "
+            f"Subsequent requests will skip this model."
+        )
+
+
+model_tracker = ModelCooldownTracker()
+
+
 def build_agent(tools: list, lang: str = "fr"):
     """
-    Construit et compile le graphe LangGraph ReAct.
+    Build and compile the LangGraph ReAct execution graph.
 
     Args:
-        tools: Liste des outils MCP à binder au modèle.
-        lang: Langue pour le system prompt ("fr" ou "en").
+        tools: List of MCP tools to bind to the model.
+        lang: Language preference string.
 
     Returns:
-        Le graphe compilé avec la mémoire, prêt à être invoqué.
+        Compiled execution graph with checkpointer.
     """
-    # 1. Initialiser le LLM avec les outils bindés
-    llm = ChatGroq(
-        model=settings.GROQ_MODEL,
-        temperature=0.3,
-        max_tokens=500,
-        api_key=settings.GROQ_API_KEY,
-    )
-    llm_with_tools = llm.bind_tools(tools)
-
-    # 2. Choisir le system prompt selon la langue
-    system_prompt = SYSTEM_PROMPT_FR if lang == "fr" else SYSTEM_PROMPT_EN
-
-    # 3. Définir le nœud "call_model"
     def call_model(state: AgentState):
-        """Nœud principal : appelle le LLM avec le system prompt et l'historique."""
+        """Main graph node: invokes LLM using dynamic system prompt (Pass 1 or Pass 2) and pruned history."""
         messages = state["messages"]
 
-        # Injecter le system prompt en première position s'il n'y est pas
-        from langchain_core.messages import SystemMessage
-        if not messages or not isinstance(messages[0], SystemMessage):
-            messages = [SystemMessage(content=system_prompt)] + messages
+        from langchain_core.messages import SystemMessage, HumanMessage, AIMessage, ToolMessage
 
-        response = llm_with_tools.invoke(messages)
+        # Determine if we are in Pass 2 (after a ToolMessage)
+        is_pass2 = any(isinstance(m, ToolMessage) for m in messages)
+        active_system_prompt = SYSTEM_PROMPT_PASS2 if is_pass2 else SYSTEM_PROMPT_PASS1
+
+        # Filter history: keep HumanMessage and text AIMessage from past turns
+        human_indices = [i for i, m in enumerate(messages) if isinstance(m, HumanMessage)]
+        if human_indices:
+            last_human_idx = human_indices[-1]
+            pruned_past = []
+            for msg in messages[:last_human_idx]:
+                if isinstance(msg, HumanMessage):
+                    pruned_past.append(msg)
+                elif isinstance(msg, AIMessage) and msg.content and str(msg.content).strip():
+                    pruned_past.append(AIMessage(content=str(msg.content).strip()))
+            # Sliding window: retain last 3 past message turns
+            pruned_past = pruned_past[-3:]
+            messages = [SystemMessage(content=active_system_prompt)] + pruned_past + list(messages[last_human_idx:])
+        else:
+            if not messages or not isinstance(messages[0], SystemMessage):
+                messages = [SystemMessage(content=active_system_prompt)] + list(messages)
+
+        # Ordered fallback cascade over Groq models supporting tool calling
+        base_cascade = settings.groq_cascade_list
+
+        cascade = []
+        for model in base_cascade:
+            if model and model not in cascade:
+                cascade.append(model)
+
+        # Filter out quarantined models via circuit breaker
+        active_cascade = [m for m in cascade if model_tracker.is_active(m)]
+        if not active_cascade:
+            active_cascade = cascade  # Fallback to full cascade if all are paused
+
+        response = None
+        last_error = None
+
+        for model_name in active_cascade:
+            try:
+                current_llm = ChatGroq(
+                    model=model_name,
+                    temperature=0.0,
+                    max_tokens=500,
+                    api_key=settings.GROQ_API_KEY,
+                    max_retries=0,
+                    timeout=10.0,
+                )
+                current_llm_with_tools = current_llm.bind_tools(tools)
+                response = current_llm_with_tools.invoke(messages)
+
+                # Strip reasoning tags (<think> and #thought)
+                if isinstance(response.content, str):
+                    response.content = re.sub(r"(?:<think>|#thought).*?(?:</think>|\n\n(?=[A-Z\*\#\-]))", "", response.content, flags=re.DOTALL).strip()
+                    response.content = re.sub(r"^#thought.*?\n\n", "", response.content, flags=re.DOTALL).strip()
+
+                # Response validation: empty text with no tool calls triggers fallback
+                if not response.content.strip() and not getattr(response, "tool_calls", None):
+                    raise ValueError("Model returned an empty response without tool calls.")
+
+                usage = getattr(response, "usage_metadata", {}) or {}
+                prompt_tok = usage.get("input_tokens", 0)
+                completion_tok = usage.get("output_tokens", 0)
+                total_tok = usage.get("total_tokens", 0)
+
+                from app.security import token_limiter, current_client_ip
+                client_ip = current_client_ip.get()
+                token_limiter.add_tokens(client_ip, total_tok)
+
+                logger.info(
+                    f"[LLM TOKEN USAGE] IP: {client_ip} | Model: {model_name} | "
+                    f"Prompt: {prompt_tok} | Completion: {completion_tok} | Total: {total_tok}"
+                )
+
+                break
+            except Exception as e:
+                last_error = e
+                if "rate limit" in str(e).lower() or "429" in str(e):
+                    model_tracker.parse_and_disable(model_name, str(e))
+                else:
+                    logger.warning(
+                        f"Failure with model '{model_name}' in cascade ({e}). "
+                        f"Falling back to next model..."
+                    )
+        else:
+            if last_error:
+                raise last_error
+
         return {"messages": [response]}
 
-    # 4. Construire le graphe
     builder = StateGraph(AgentState)
 
     builder.add_node("call_model", call_model)
@@ -87,5 +185,4 @@ def build_agent(tools: list, lang: str = "fr"):
     builder.add_conditional_edges("call_model", tools_condition)
     builder.add_edge("tools", "call_model")
 
-    # 5. Compiler avec la mémoire
     return builder.compile(checkpointer=memory)

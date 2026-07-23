@@ -1,4 +1,4 @@
-name: CI/CD — Tests + Security Audit + Deploy
+name: CI/CD Pipeline: Security Audit, Unit Tests, Deploy
 
 on:
   push:
@@ -7,9 +7,7 @@ on:
     branches: [main]
 
 jobs:
-  # -----------------------------------------------------------------
-  # Job 1 : Audit de sécurité (dépendances + analyse statique)
-  # -----------------------------------------------------------------
+  # Job 1: Security audit (dependencies and static analysis)
   security:
     runs-on: ubuntu-latest
     steps:
@@ -38,9 +36,7 @@ jobs:
           name: security-report
           path: bandit-report.json
 
-  # -----------------------------------------------------------------
-  # Job 2 : Tests unitaires
-  # -----------------------------------------------------------------
+  # Job 2: Unit tests
   test:
     runs-on: ubuntu-latest
     needs: security
@@ -65,9 +61,7 @@ jobs:
           ALLOWED_ORIGINS: "https://romainsebire.fr"
         run: pytest tests/ -v
 
-  # -----------------------------------------------------------------
-  # Job 3 : Déploiement sur Render (uniquement sur push main)
-  # -----------------------------------------------------------------
+  # Job 3: Deploy to Render (push on main only)
   deploy:
     runs-on: ubuntu-latest
     needs: test

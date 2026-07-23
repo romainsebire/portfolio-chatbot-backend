@@ -1,10 +1,10 @@
 """
-MCP Server RAG — serveur FastMCP exposant les outils de recherche vectorielle.
+MCP RAG Server: FastMCP server exposing vector search tools.
 
-Ce serveur tourne IN-PROCESS (mode stdio) dans le même processus que l'agent.
-Il expose deux tools MCP que l'agent LangGraph peut appeler autonomement :
-  - retrieve_documents : recherche sémantique dans Pinecone
-  - get_context_info   : méta-informations sur la base vectorielle
+This server runs in-process (stdio mode) alongside the agent.
+It exposes two MCP tools that the LangGraph agent can call autonomously:
+  - retrieve_documents: semantic search in Pinecone
+  - get_context_info: metadata regarding the vector database index
 """
 
 import logging
@@ -17,14 +17,10 @@ from app.embeddings import embed_text
 
 logger = logging.getLogger(__name__)
 
-# ---------------------------------------------------------------------------
-# FastMCP server (sera consommé en mode stdio par l'agent)
-# ---------------------------------------------------------------------------
+# FastMCP server instance (consumed via stdio by the agent)
 mcp = FastMCP("Portfolio RAG")
 
-# ---------------------------------------------------------------------------
 # Pinecone client (lazy singleton)
-# ---------------------------------------------------------------------------
 _pc_index = None
 
 
@@ -36,49 +32,59 @@ def _get_pinecone_index():
     return _pc_index
 
 
-# ---------------------------------------------------------------------------
 # MCP Tools
-# ---------------------------------------------------------------------------
-TOP_K = 5
+TOP_K = 3
 
 
 @mcp.tool()
 def retrieve_documents(query: str, top_k: int = TOP_K) -> dict:
     """
-    Recherche sémantique dans la base vectorielle du portfolio de Romain Sebire.
+    Semantic search in Romain Sebire's portfolio vector database.
 
-    Utilise cette fonction pour répondre aux questions sur le profil, le parcours,
-    les compétences, les projets et les expériences de Romain.
+    Use this function to answer questions about Romain's background, profile,
+    skills, technical projects, and work experiences.
 
     Args:
-        query: La question ou requête de recherche en langage naturel.
-        top_k: Nombre de résultats à retourner (défaut: 5).
+        query: Search query or question in natural language (English keywords).
+        top_k: Number of results to return (1 to 3, default: 3).
+               - Use top_k=1 for a specific sub-section (e.g. RESULTS, METHODOLOGY, CONTEXT).
+               - Use top_k=3 for a broad overview of a project or full summary.
 
     Returns:
-        Dictionnaire contenant les documents pertinents trouvés avec leur
-        section d'origine et leur score de similarité.
+        Dictionary containing matching document chunks with their source section and similarity score.
     """
     try:
-        # 1. Embed la requête
+        actual_top_k = min(top_k, TOP_K)
+
+        # 1. Embed query
         query_embedding = embed_text(query)
 
-        # 2. Recherche Pinecone
+        # 2. Query Pinecone vector database
         index = _get_pinecone_index()
         results = index.query(
             vector=query_embedding,
-            top_k=top_k,
+            top_k=actual_top_k,
             include_metadata=True,
         )
 
-        # 3. Formatter les résultats
+        # 3. Format and filter results using minimum similarity score
         documents = []
+        min_score = getattr(settings, "MIN_SIMILARITY_SCORE", 0.75)
         for match in results.get("matches", []):
+            score = round(match.get("score", 0), 4)
+            if score < min_score:
+                logger.info(f"Filtered out document with score {score} < {min_score}")
+                continue
             metadata = match.get("metadata", {})
             documents.append({
                 "text": metadata.get("text", ""),
                 "section": metadata.get("section", ""),
-                "score": round(match.get("score", 0), 4),
+                "score": score,
             })
+
+        logger.info(
+            f"[TOOL CALL] retrieve_documents(query='{query[:40]}...', top_k={top_k}) -> Found {len(documents)} documents"
+        )
 
         return {
             "success": True,
@@ -99,13 +105,12 @@ def retrieve_documents(query: str, top_k: int = TOP_K) -> dict:
 @mcp.tool()
 def get_context_info() -> dict:
     """
-    Retourne des informations sur la base vectorielle du portfolio.
+    Return statistics and information about the portfolio vector index.
 
-    Utilise cette fonction pour vérifier l'état de la base de données
-    ou savoir quelles informations sont disponibles.
+    Use this function to check vector database status or inspect available metadata.
 
     Returns:
-        Dictionnaire avec les statistiques de l'index Pinecone.
+        Dictionary containing Pinecone index statistics.
     """
     try:
         index = _get_pinecone_index()

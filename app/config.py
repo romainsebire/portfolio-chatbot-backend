@@ -1,4 +1,4 @@
-"""Configuration — chargement et validation typée des variables d'environnement."""
+"""Application configuration: loading and typed validation of environment variables."""
 
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
@@ -10,30 +10,47 @@ class Settings(BaseSettings):
         extra="ignore",
     )
 
-    # --- Pinecone ---
+    # Pinecone
     PINECONE_API_KEY: str
     PINECONE_INDEX_NAME: str = "portfolio-chatbot"
 
-    # --- Groq ---
+    # Groq
     GROQ_API_KEY: str
-    GROQ_MODEL: str = "llama-3.3-70b-versatile"
+    GROQ_CASCADE_MODELS: str = (
+        "llama-3.3-70b-versatile,"
+        "openai/gpt-oss-120b,"
+        "qwen/qwen3.6-27b,"
+        "openai/gpt-oss-20b,"
+        "llama-3.1-8b-instant"
+    )
 
-    # --- Embedding ---
-    EMBEDDING_MODEL: str = "paraphrase-multilingual-MiniLM-L12-v2"
+    @property
+    def groq_cascade_list(self) -> list[str]:
+        """Return the ordered list of models for the Groq fallback cascade."""
+        return [m.strip() for m in self.GROQ_CASCADE_MODELS.split(",") if m.strip()]
 
-    # --- CORS ---
+    # Embedding
+    EMBEDDING_MODEL: str = "multilingual-e5-large"
+
+    # CORS
     ALLOWED_ORIGINS: str = "https://romainsebire.fr"
 
-    # --- Sécurité ---
+    # Security & Rate Limits
     RATE_LIMIT_PER_MINUTE: int = 10
-    MAX_MESSAGE_LENGTH: int = 500
+    MAX_DAILY_TOKENS_PER_IP: int = 50000
+    MAX_MESSAGE_LENGTH: int = 250
+    ADMIN_KEY: str = "admin-secret-key-change-me"
+    BLOCKED_IPS: str = ""
 
-    # --- Logging ---
+    # RAG Parameters
+    MIN_SIMILARITY_SCORE: float = 0.79
+
+    # Logging
     LOG_LEVEL: str = "INFO"
 
     @property
     def allowed_origins_list(self) -> list[str]:
-        """Parse la chaîne d'origines séparées par des virgules."""
+        """Parse comma-separated origin strings."""
         return [o.strip() for o in self.ALLOWED_ORIGINS.split(",") if o.strip()]
 
 
