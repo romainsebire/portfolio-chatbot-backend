@@ -5,7 +5,7 @@ uvicorn[standard]>=0.34.3
 # LLM (LangChain + Groq)
 langchain>=0.3.27
 langchain-groq>=0.3.3
-langgraph>=0.4.7
+langgraph>=1.2.10
 
 # MCP (Model Context Protocol)
 fastmcp>=2.14.2
