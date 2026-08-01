@@ -14,7 +14,7 @@ langchain-mcp-adapters>=0.1.9
 # Embeddings (Pinecone Cloud Inference is used, no local packages required)
 
 # Vector database
-pinecone>=6.0.0
+pinecone>=9.1.0
 
 # Configuration
 python-dotenv>=1.0.0
