@@ -99,8 +99,8 @@ pytest tests/ -v
 # Run Pinecone retrieval benchmark (0 Groq LLM tokens consumed)
 python -m evaluation.evaluate --retrieval-only
 
-# Run full end-to-end Agentic RAG benchmark (with optional LLM-as-a-Judge)
-python -m evaluation.evaluate --judge
+# Run full end-to-end Agentic RAG benchmark on a single model with rate-limit pacing (35s delay)
+python -m evaluation.evaluate --model openai/gpt-oss-120b --delay 35 --judge
 
 # Run dependency and static security audits
 pip-audit

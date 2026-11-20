@@ -277,20 +277,30 @@ def evaluate_with_judge(item: dict, actual_reply: str) -> dict:
 async def run_full_benchmark(
     use_judge: bool = False,
     selected_ids: set[str] | None = None,
-    delay_s: float = 2.0,
+    delay_s: float = 35.0,
+    pinned_model: str | None = None,
 ) -> dict:
     """Execute end-to-end evaluation across the 2-pass LangGraph + FastMCP pipeline."""
     from langchain_core.messages import AIMessage, HumanMessage, ToolMessage
+    from app.config import settings
     from app.rag import init_mcp, close_mcp, _get_agent
     from app.security import PromptInjectionError, sanitize_input, sanitize_output
+
+    original_cascade = settings.GROQ_CASCADE_MODELS
+    if pinned_model:
+        settings.GROQ_CASCADE_MODELS = pinned_model
 
     items = [
         item for item in EVALUATION_DATASET
         if not selected_ids or item["id"] in selected_ids
     ]
 
+    active_models_label = pinned_model if pinned_model else settings.GROQ_CASCADE_MODELS
     print("=" * 80)
-    print(f"FULL AGENTIC RAG BENCHMARK ({len(items)} questions | Judge={'ON' if use_judge else 'OFF'})")
+    print(
+        f"FULL AGENTIC RAG BENCHMARK ({len(items)} questions | "
+        f"Models={active_models_label} | Delay={delay_s}s | Judge={'ON' if use_judge else 'OFF'})"
+    )
     print("=" * 80)
 
     await init_mcp()
@@ -440,6 +450,7 @@ async def run_full_benchmark(
                 await asyncio.sleep(delay_s)
 
     finally:
+        settings.GROQ_CASCADE_MODELS = original_cascade
         await close_mcp()
 
     n = len(results) or 1
@@ -505,10 +516,16 @@ def main():
         help="Comma-separated list of question IDs to run (e.g. E1,M3,A1).",
     )
     parser.add_argument(
+        "--model",
+        type=str,
+        default="",
+        help="Pin evaluation to a single Groq model (e.g. 'openai/gpt-oss-120b') instead of the full cascade.",
+    )
+    parser.add_argument(
         "--delay",
         type=float,
-        default=2.0,
-        help="Delay in seconds between LLM calls to respect Groq Free Tier TPM limits (default: 2.0).",
+        default=35.0,
+        help="Delay in seconds between questions so a single model stays under Groq's 8000 TPM limit (default: 35.0s).",
     )
     parser.add_argument(
         "--output",
@@ -519,6 +536,7 @@ def main():
     args = parser.parse_args()
 
     selected_ids = {x.strip() for x in args.ids.split(",") if x.strip()} or None
+    pinned_model = args.model.strip() or None
 
     if args.retrieval_only:
         report = run_retrieval_benchmark(selected_ids=selected_ids)
@@ -528,6 +546,7 @@ def main():
                 use_judge=args.judge,
                 selected_ids=selected_ids,
                 delay_s=args.delay,
+                pinned_model=pinned_model,
             )
         )
 
