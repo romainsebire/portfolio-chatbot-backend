@@ -361,12 +361,13 @@ EVALUATION_DATASET = [
         ],
         "retrieval_query": "PROJECT Early Detection of Writing Disorders CONTEXT",
         "must_contain_any": [
-            ["thèse", "Lauren Sismeiro", "EuroMov", "R&D"],
+            ["AVIAREPT", "thèse", "Lauren Sismeiro", "EuroMov", "R&D", "écriture"],
         ],
         "must_not_contain": [
             "selon les documents",
             "les documents ne",
             "d'après les documents",
+            "documents disponibles",
             "contexte fourni",
         ],
     },

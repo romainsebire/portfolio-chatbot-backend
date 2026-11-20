@@ -134,8 +134,10 @@ def build_agent(tools: list, lang: str = "fr"):
                     max_retries=0,
                     timeout=10.0,
                 )
-                current_llm_with_tools = current_llm.bind_tools(tools)
-                response = current_llm_with_tools.invoke(messages)
+                # Only bind MCP tools in Pass 1 (Router). In Pass 2 (Generator), invoke pure LLM
+                # so the model cannot loop on tool calls and saves tool schema prompt tokens.
+                llm_to_invoke = current_llm if is_pass2 else current_llm.bind_tools(tools)
+                response = llm_to_invoke.invoke(messages)
 
                 # Strip reasoning tags (<think> and #thought)
                 if isinstance(response.content, str):

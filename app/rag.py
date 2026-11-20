@@ -45,7 +45,9 @@ async def init_mcp() -> list:
     logger.info("Starting persistent MCP server connection...")
 
     venv_bin = os.path.dirname(sys.executable)
-    fastmcp_cmd = os.path.join(venv_bin, "fastmcp")
+    fastmcp_cmd = os.path.join(venv_bin, "fastmcp.exe" if os.name == "nt" else "fastmcp")
+    if not os.path.exists(fastmcp_cmd):
+        fastmcp_cmd = os.path.join(venv_bin, "fastmcp")
     if not os.path.exists(fastmcp_cmd):
         fastmcp_cmd = "fastmcp"
 
