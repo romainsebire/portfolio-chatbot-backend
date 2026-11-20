@@ -26,6 +26,11 @@ app/
 ├── mcp_server.py    # FastMCP server (RAG tools exposed over stdio)
 ├── rag.py           # RAG orchestrator (connects MCP -> Agent -> Response)
 └── embeddings.py    # Pinecone Cloud Inference API client singleton
+evaluation/
+├── dataset.py       # Golden benchmark dataset (23 test cases across 4 difficulty tiers)
+└── evaluate.py      # Retrieval & end-to-end RAG evaluation CLI (with optional LLM-as-a-Judge)
+scripts/
+└── embed.py         # Semantic chunking & Pinecone vector ingestion script
 ```
 
 ### Execution Flow
@@ -85,11 +90,17 @@ uvicorn app.main:app --reload
 python scripts/embed.py
 ```
 
-## Testing & Security Audits
+## Testing, Security Audits & RAG Benchmark
 
 ```bash
 # Run unit and security test suite (38 tests)
 pytest tests/ -v
+
+# Run Pinecone retrieval benchmark (0 Groq LLM tokens consumed)
+python -m evaluation.evaluate --retrieval-only
+
+# Run full end-to-end Agentic RAG benchmark (with optional LLM-as-a-Judge)
+python -m evaluation.evaluate --judge
 
 # Run dependency and static security audits
 pip-audit
@@ -148,8 +159,8 @@ GitHub Actions workflow (`.github/workflows/deploy.yml`):
 | Agent | LangGraph (ReAct) | Autonomous orchestration, stateful memory |
 | Protocol | MCP (FastMCP) | Standardized interface for RAG tools |
 | Vector DB | Pinecone | Cloud vector database |
-| Embeddings | Pinecone Inference | Cloud embedding generation |
-| LLM | Groq Cascade | Dynamic fallback cascade across Groq LLM models |
+| Embeddings | Pinecone Inference | Cloud embedding generation (`multilingual-e5-large`) |
+| LLM | Groq Cascade | Dynamic fallback cascade (`openai/gpt-oss-120b`, `qwen/qwen3.8-27b`, `openai/gpt-oss-20b`) |
 | Security | slowapi + custom middleware | Rate limiting, security headers, sanitization |
 | CI/CD | GitHub Actions + Render | Automated test, audit, and deployment pipeline |
 

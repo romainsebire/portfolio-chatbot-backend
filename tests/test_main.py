@@ -157,5 +157,8 @@ def test_system_prompts_definition_and_meta_language_rules():
 
     assert "NO RAG META-LANGUAGE" in SYSTEM_PROMPT_PASS2
     assert "The documents do not specify" in SYSTEM_PROMPT_PASS2
+    assert "ACCESSIBLE & LOW-JARGON EXPLANATIONS" in SYSTEM_PROMPT_PASS2
+
+
 
 

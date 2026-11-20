@@ -25,6 +25,8 @@ PINECONE_API_KEY = os.environ["PINECONE_API_KEY"]
 PINECONE_INDEX_NAME = os.environ.get("PINECONE_INDEX_NAME", "portfolio-chatbot")
 EMBEDDING_MODEL = os.environ.get("EMBEDDING_MODEL", "multilingual-e5-large")
 DATA_FILE = os.path.join(os.path.dirname(__file__), "..", "data", "contexte.txt")
+if not os.path.exists(DATA_FILE):
+    DATA_FILE = os.path.join(os.path.dirname(__file__), "..", "contexte.txt")
 
 MAX_CHUNK_CHARS = 5000
 OVERLAP_CHARS = 200
@@ -35,8 +37,9 @@ def load_and_chunk(filepath: str) -> list[dict]:
     with open(filepath, "r", encoding="utf-8") as f:
         content = f.read()
 
-    # Strip HTML comments
+    # Strip HTML comments and full-line hash comments
     content = re.sub(r"<!--.*?-->", "", content, flags=re.DOTALL)
+    content = re.sub(r"^# [^\n]*$", "", content, flags=re.MULTILINE)
 
     # Split by section titles (## TITLE)
     sections = re.split(r"^(## .+)$", content, flags=re.MULTILINE)
@@ -62,6 +65,9 @@ def load_and_chunk(filepath: str) -> list[dict]:
                 current_section = section_title
             continue
 
+        if current_section == "GENERAL":
+            continue
+
         sub_chunks = []
         if len(part) <= MAX_CHUNK_CHARS:
             if part:
@@ -84,7 +90,7 @@ def load_and_chunk(filepath: str) -> list[dict]:
                 prefix = f"[{current_project}] "
                 text_with_context = prefix + text
             else:
-                text_with_context = text
+                text_with_context = f"[{current_section}] " + text
 
             chunks.append({
                 "section": current_section,
@@ -109,6 +115,12 @@ def main():
     print(f"\nConnecting to Pinecone index: {PINECONE_INDEX_NAME}")
     pc = Pinecone(api_key=PINECONE_API_KEY)
     index = pc.Index(PINECONE_INDEX_NAME)
+
+    try:
+        print("Clearing old vectors from Pinecone index before fresh ingestion...")
+        index.delete(delete_all=True)
+    except Exception as e:
+        print(f"Note on delete_all: {e}")
 
     texts = [c["text"] for c in chunks]
     print(f"Generating embeddings via Pinecone Inference ({EMBEDDING_MODEL})...")

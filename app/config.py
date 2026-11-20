@@ -17,11 +17,9 @@ class Settings(BaseSettings):
     # Groq
     GROQ_API_KEY: str
     GROQ_CASCADE_MODELS: str = (
-        "llama-3.3-70b-versatile,"
         "openai/gpt-oss-120b,"
-        "qwen/qwen3.6-27b,"
-        "openai/gpt-oss-20b,"
-        "llama-3.1-8b-instant"
+        "qwen/qwen3.8-27b,"
+        "openai/gpt-oss-20b"
     )
 
     @property

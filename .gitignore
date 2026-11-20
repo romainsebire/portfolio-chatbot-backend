@@ -38,5 +38,6 @@ benchmark_results.json
 
 # Sensitive data files
 data/contexte.txt
+contexte.txt
 data/*.txt
 !data/contexte.example.txt
