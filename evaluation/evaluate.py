@@ -226,7 +226,7 @@ Respond ONLY with a valid JSON object:
 
 
 def evaluate_with_judge(item: dict, actual_reply: str) -> dict:
-    """Grade an answer using the first active model in the Groq cascade."""
+    """Grade an answer using the dedicated fast judge model (qwen/qwen3.8-27b) or fallback cascade."""
     from langchain_groq import ChatGroq
     from app.config import settings
 
@@ -236,12 +236,17 @@ def evaluate_with_judge(item: dict, actual_reply: str) -> dict:
         f"Actual Answer: {actual_reply}"
     )
 
-    for model_name in settings.groq_cascade_list:
+    judge_models = ["qwen/qwen3.8-27b", "openai/gpt-oss-120b", "openai/gpt-oss-20b"]
+    for m in settings.groq_cascade_list:
+        if m not in judge_models:
+            judge_models.append(m)
+
+    for model_name in judge_models:
         try:
             llm = ChatGroq(
                 model=model_name,
                 temperature=0.0,
-                max_tokens=512,
+                max_tokens=1024,
                 api_key=settings.GROQ_API_KEY,
                 max_retries=1,
                 timeout=15.0,
