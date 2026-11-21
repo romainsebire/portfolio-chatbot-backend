@@ -160,7 +160,7 @@ GitHub Actions workflow (`.github/workflows/deploy.yml`):
 | Protocol | MCP (FastMCP) | Standardized interface for RAG tools |
 | Vector DB | Pinecone | Cloud vector database |
 | Embeddings | Pinecone Inference | Cloud embedding generation (`multilingual-e5-large`) |
-| LLM | Groq Cascade | Dynamic fallback cascade (`openai/gpt-oss-120b`, `qwen/qwen3.8-27b`, `openai/gpt-oss-20b`) |
+| LLM | Groq Cascade | Dynamic fallback cascade (`qwen/qwen3.8-27b`, `openai/gpt-oss-120b`, `openai/gpt-oss-20b`) |
 | Security | slowapi + custom middleware | Rate limiting, security headers, sanitization |
 | CI/CD | GitHub Actions + Render | Automated test, audit, and deployment pipeline |
 

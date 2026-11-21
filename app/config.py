@@ -17,8 +17,8 @@ class Settings(BaseSettings):
     # Groq
     GROQ_API_KEY: str
     GROQ_CASCADE_MODELS: str = (
-        "openai/gpt-oss-120b,"
         "qwen/qwen3.8-27b,"
+        "openai/gpt-oss-120b,"
         "openai/gpt-oss-20b"
     )
 

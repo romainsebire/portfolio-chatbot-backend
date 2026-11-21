@@ -225,8 +225,12 @@ Respond ONLY with a valid JSON object:
 {{"factuality": <0-10>, "simplicity": <0-10>, "safety": <0-10>, "reasoning": "<1 short sentence>"}}"""
 
 
-def evaluate_with_judge(item: dict, actual_reply: str) -> dict:
-    """Grade an answer using the dedicated fast judge model (qwen/qwen3.8-27b) or fallback cascade."""
+def evaluate_with_judge(
+    item: dict,
+    actual_reply: str,
+    judge_model: str = "openai/gpt-oss-120b",
+) -> dict:
+    """Grade an answer using a single fixed judge model for fair cross-model comparison."""
     from langchain_groq import ChatGroq
     from app.config import settings
 
@@ -236,20 +240,15 @@ def evaluate_with_judge(item: dict, actual_reply: str) -> dict:
         f"Actual Answer: {actual_reply}"
     )
 
-    judge_models = ["qwen/qwen3.8-27b", "openai/gpt-oss-120b", "openai/gpt-oss-20b"]
-    for m in settings.groq_cascade_list:
-        if m not in judge_models:
-            judge_models.append(m)
-
-    for model_name in judge_models:
+    for attempt in range(3):
         try:
             llm = ChatGroq(
-                model=model_name,
+                model=judge_model,
                 temperature=0.0,
                 max_tokens=1024,
                 api_key=settings.GROQ_API_KEY,
                 max_retries=1,
-                timeout=15.0,
+                timeout=20.0,
             )
             res = llm.invoke([
                 ("system", JUDGE_SYSTEM_PROMPT.format(lang=item["lang"])),
@@ -271,6 +270,8 @@ def evaluate_with_judge(item: dict, actual_reply: str) -> dict:
                     "reasoning": str(data.get("reasoning", "")),
                 }
         except Exception:
+            if attempt < 2:
+                time.sleep(10.0)
             continue
 
     return {"factuality": 0.0, "simplicity": 0.0, "safety": 0.0, "overall": 0.0, "reasoning": "Judge parse/API failure"}
@@ -284,6 +285,7 @@ async def run_full_benchmark(
     selected_ids: set[str] | None = None,
     delay_s: float = 35.0,
     pinned_model: str | None = None,
+    judge_model: str = "openai/gpt-oss-120b",
 ) -> dict:
     """Execute end-to-end evaluation across the 2-pass LangGraph + FastMCP pipeline."""
     from langchain_core.messages import AIMessage, HumanMessage, ToolMessage
@@ -347,11 +349,20 @@ async def run_full_benchmark(
                 prior_state = await agent.aget_state(config)
                 prior_msg_count = len(prior_state.values.get("messages", [])) if prior_state and prior_state.values else 0
 
-                # 2. Invoke agent for target question
-                state_out = await agent.ainvoke(
-                    {"messages": [HumanMessage(content=clean_q)]},
-                    config=config,
-                )
+                # 2. Invoke agent for target question (with retry on transient timeout/429 in single-model benchmark)
+                for attempt in range(3):
+                    try:
+                        state_out = await agent.ainvoke(
+                            {"messages": [HumanMessage(content=clean_q)]},
+                            config=config,
+                        )
+                        break
+                    except Exception as err:
+                        if attempt < 2:
+                            print(f"       [Retry {attempt+1}/2 for {qid} after error: {type(err).__name__}] Waiting 20s...")
+                            await asyncio.sleep(20.0)
+                        else:
+                            raise
                 new_messages = state_out["messages"][prior_msg_count:]
 
                 for m in new_messages:
@@ -423,7 +434,9 @@ async def run_full_benchmark(
             )
 
             if use_judge and not blocked:
-                j_scores = evaluate_with_judge(item, actual_reply)
+                if pinned_model == judge_model:
+                    await asyncio.sleep(5.0)
+                j_scores = evaluate_with_judge(item, actual_reply, judge_model=judge_model)
                 eval_item.judge_factuality = j_scores["factuality"]
                 eval_item.judge_simplicity = j_scores["simplicity"]
                 eval_item.judge_safety = j_scores["safety"]
@@ -533,6 +546,12 @@ def main():
         help="Delay in seconds between questions so a single model stays under Groq's 8000 TPM limit (default: 35.0s).",
     )
     parser.add_argument(
+        "--judge-model",
+        type=str,
+        default="openai/gpt-oss-120b",
+        help="Fixed Groq model used as LLM-as-a-Judge across all runs (default: 'openai/gpt-oss-120b').",
+    )
+    parser.add_argument(
         "--output",
         type=str,
         default="benchmark_results.json",
@@ -552,6 +571,7 @@ def main():
                 selected_ids=selected_ids,
                 delay_s=args.delay,
                 pinned_model=pinned_model,
+                judge_model=args.judge_model.strip(),
             )
         )
 

@@ -34,7 +34,7 @@ Thumbs.db
 # Logs and runtime artifacts
 *.log
 daily_stats.json
-benchmark_results.json
+benchmark_*.json
 
 # Sensitive data files
 data/contexte.txt

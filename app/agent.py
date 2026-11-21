@@ -131,8 +131,8 @@ def build_agent(tools: list, lang: str = "fr"):
                     temperature=0.0,
                     max_tokens=1024,
                     api_key=settings.GROQ_API_KEY,
-                    max_retries=0,
-                    timeout=10.0,
+                    max_retries=1,
+                    timeout=20.0,
                 )
                 # Only bind MCP tools in Pass 1 (Router). In Pass 2 (Generator), invoke pure LLM
                 # so the model cannot loop on tool calls and saves tool schema prompt tokens.
