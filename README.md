@@ -123,7 +123,7 @@ python scripts/embed.py
 ## Testing, Security Audits & RAG Benchmark
 
 ```bash
-# Run unit and security test suite (39 tests)
+# Run unit and security test suite (44 tests)
 pytest tests/ -v
 
 # Run Pinecone retrieval benchmark (0 Groq LLM tokens consumed)

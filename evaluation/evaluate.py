@@ -319,7 +319,7 @@ async def run_full_benchmark(
             lang = item.get("lang", "fr")
             question = item["question"]
             thread_id = f"bench-{qid}-{uuid.uuid4().hex[:8]}"
-            config = {"configurable": {"thread_id": thread_id}}
+            config = {"configurable": {"thread_id": thread_id, "lang": lang}}
 
             t0 = time.perf_counter()
             blocked = False

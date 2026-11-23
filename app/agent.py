@@ -15,7 +15,14 @@ import re
 import time
 from typing import Annotated, TypedDict
 
-from langchain_core.messages import AnyMessage
+from langchain_core.messages import (
+    AIMessage,
+    AnyMessage,
+    HumanMessage,
+    SystemMessage,
+    ToolMessage,
+)
+from langchain_core.runnables import RunnableConfig
 from langchain_groq import ChatGroq
 from langgraph.checkpoint.memory import MemorySaver
 from langgraph.graph import StateGraph, START, add_messages
@@ -70,6 +77,63 @@ class ModelCooldownTracker:
 model_tracker = ModelCooldownTracker()
 
 
+def _build_system_prompt(is_pass2: bool, lang: str = "fr") -> str:
+    """Return the Pass 1 or Pass 2 system prompt with interface language fallback instructions."""
+    base_prompt = SYSTEM_PROMPT_PASS2 if is_pass2 else SYSTEM_PROMPT_PASS1
+    default_lang = "English" if lang == "en" else "French"
+    return (
+        f"{base_prompt}\n"
+        "## INTERFACE LANGUAGE FALLBACK\n"
+        f"- The visitor is browsing the {default_lang} version of the portfolio. Always reply in the explicit language of the visitor's message. "
+        f"If the message is an ambiguous short greeting, single word, or typo (e.g., 'Sakut', 'Hey', 'Ok'), default to {default_lang}.\n"
+    )
+
+
+def _prepare_model_inputs(
+    messages: list[AnyMessage],
+    lang: str = "fr",
+) -> tuple[bool, list[AnyMessage]]:
+    """
+    Determine whether the current turn is in Pass 2 and construct bounded inputs for the LLM.
+
+    Pass 2 is active strictly when a ToolMessage exists in the current turn (at or after the last
+    HumanMessage), preventing past-turn tool calls in MemorySaver from disabling tool binding on
+    subsequent turns.
+    """
+    human_indices = [i for i, m in enumerate(messages) if isinstance(m, HumanMessage)]
+    if human_indices:
+        last_human_idx = human_indices[-1]
+        current_turn_messages = list(messages[last_human_idx:])
+        is_pass2 = any(isinstance(m, ToolMessage) for m in current_turn_messages)
+        active_system_prompt = _build_system_prompt(is_pass2=is_pass2, lang=lang)
+
+        pruned_past: list[AnyMessage] = []
+        for msg in messages[:last_human_idx]:
+            if isinstance(msg, HumanMessage):
+                pruned_past.append(msg)
+            elif (
+                isinstance(msg, AIMessage)
+                and not getattr(msg, "tool_calls", None)
+                and msg.content
+                and str(msg.content).strip()
+            ):
+                pruned_past.append(AIMessage(content=str(msg.content).strip()))
+
+        # Sliding window: retain up to 3 complete past turns (6 messages) without an orphan leading AIMessage
+        pruned_past = pruned_past[-6:]
+        while pruned_past and isinstance(pruned_past[0], AIMessage):
+            pruned_past.pop(0)
+
+        prepared_messages = [SystemMessage(content=active_system_prompt)] + pruned_past + current_turn_messages
+        return is_pass2, prepared_messages
+
+    is_pass2 = any(isinstance(m, ToolMessage) for m in messages)
+    active_system_prompt = _build_system_prompt(is_pass2=is_pass2, lang=lang)
+    if not messages or not isinstance(messages[0], SystemMessage):
+        return is_pass2, [SystemMessage(content=active_system_prompt)] + list(messages)
+    return is_pass2, list(messages)
+
+
 def build_agent(tools: list, lang: str = "fr"):
     """
     Build and compile the LangGraph ReAct execution graph.
@@ -81,32 +145,11 @@ def build_agent(tools: list, lang: str = "fr"):
     Returns:
         Compiled execution graph with checkpointer.
     """
-    def call_model(state: AgentState):
+    def call_model(state: AgentState, config: RunnableConfig | None = None):
         """Main graph node: invokes LLM using dynamic system prompt (Pass 1 or Pass 2) and pruned history."""
-        messages = state["messages"]
-
-        from langchain_core.messages import SystemMessage, HumanMessage, AIMessage, ToolMessage
-
-        # Determine if we are in Pass 2 (after a ToolMessage)
-        is_pass2 = any(isinstance(m, ToolMessage) for m in messages)
-        active_system_prompt = SYSTEM_PROMPT_PASS2 if is_pass2 else SYSTEM_PROMPT_PASS1
-
-        # Filter history: keep HumanMessage and text AIMessage from past turns
-        human_indices = [i for i, m in enumerate(messages) if isinstance(m, HumanMessage)]
-        if human_indices:
-            last_human_idx = human_indices[-1]
-            pruned_past = []
-            for msg in messages[:last_human_idx]:
-                if isinstance(msg, HumanMessage):
-                    pruned_past.append(msg)
-                elif isinstance(msg, AIMessage) and msg.content and str(msg.content).strip():
-                    pruned_past.append(AIMessage(content=str(msg.content).strip()))
-            # Sliding window: retain last 3 past message turns
-            pruned_past = pruned_past[-3:]
-            messages = [SystemMessage(content=active_system_prompt)] + pruned_past + list(messages[last_human_idx:])
-        else:
-            if not messages or not isinstance(messages[0], SystemMessage):
-                messages = [SystemMessage(content=active_system_prompt)] + list(messages)
+        configurable = config.get("configurable", {}) if isinstance(config, dict) else {}
+        effective_lang = configurable.get("lang") or lang
+        is_pass2, messages = _prepare_model_inputs(state["messages"], lang=effective_lang)
 
         # Ordered fallback cascade over Groq models supporting tool calling
         base_cascade = settings.groq_cascade_list

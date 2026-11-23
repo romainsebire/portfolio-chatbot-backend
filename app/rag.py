@@ -119,7 +119,7 @@ async def get_rag_response(
         await init_mcp()
         agent = _get_agent(lang)
 
-        config = {"configurable": {"thread_id": effective_thread_id}}
+        config = {"configurable": {"thread_id": effective_thread_id, "lang": lang}}
 
         result = await agent.ainvoke(
             {"messages": [HumanMessage(content=message)]},
